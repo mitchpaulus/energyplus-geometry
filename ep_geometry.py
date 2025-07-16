@@ -490,19 +490,18 @@ def p_2d_to_1d(*args):
         return dist
 
 class Wall:
-    def __init__(self, x1: float, y1: float, x2: float, y2: float, int_ext: str) -> None:
+    def __init__(self, x1: float, y1: float, x2: float, y2: float) -> None:
         self.x1 = x1
         self.y1 = y1
         self.x2 = x2
         self.y2 = y2
-        self.int_ext = int_ext
 
     def line(self):
         """Use line definition from Divine Proportions"""
         return line_prop(self.x1, self.y1, self.x2, self.y2)
 
     def __str__(self) -> str:
-        return "\t".join([str(self.x1), str(self.y1), str(self.x2), str(self.y2), self.int_ext])
+        return "\t".join([str(self.x1), str(self.y1), str(self.x2), str(self.y2)])
 
     def __repr__(self):
         return self.__str__()
@@ -591,6 +590,10 @@ class Z:
         self.origin_z_ft = origin_z_ft
         self.space_name = space_name
 
+    def clone(self, name, space_name = None) -> 'Z':
+        new_walls = [Wall(wall.x1, wall.y1, wall.x2, wall.y2) for wall in self.walls]
+        space_name = space_name if space_name is not None else name
+        return Z(name, new_walls, self.origin_x_ft, self.origin_y_ft, self.origin_z_ft, space_name)
 
     def name_for_ref(self):
         if self.space_name.strip() == '':
@@ -640,10 +643,10 @@ class Z:
 
     def adjust_wall_coords(self, input_wall):
         # Adjust wall coordinates to be relative to the zone origin
-        return Wall(input_wall.x1 + self.origin_x_ft, input_wall.y1 + self.origin_y_ft, input_wall.x2 + self.origin_x_ft, input_wall.y2 + self.origin_y_ft, input_wall.int_ext)
+        return Wall(input_wall.x1 + self.origin_x_ft, input_wall.y1 + self.origin_y_ft, input_wall.x2 + self.origin_x_ft, input_wall.y2 + self.origin_y_ft)
 
 
-    def idf_floor(self, z_ft, construction) -> IdfBuildingSurface:
+    def idf_floor(self, z_ft: float, construction: str) -> IdfBuildingSurface:
         floor_surface = IdfBuildingSurface()
         floor_surface.name(f"{self.name_for_ref()} Floor").surface_type("Floor").construction_name(construction)
         floor_surface.zone_name(self.name).outside_boundary_condition("Ground").outside_boundary_condition_object("")
@@ -679,21 +682,21 @@ class Z:
         return floor_surface
 
 
-    def ffactor_construction(self,ffactor):
-        floor_surface = FfactorConstruction()
+    #  def ffactor_construction(self,ffactor):
+        #  floor_surface = FfactorConstruction()
 
-        area = self.shapely_poly().area # ft^2
-        area_m2 = area / 10.7639
+        #  area = self.shapely_poly().area # ft^2
+        #  area_m2 = area / 10.7639
 
-        perimeter = 0
-        for w in self.walls:
-            if w.int_ext == 'e':
-                perimeter += w.length()
+        #  perimeter = 0
+        #  for w in self.walls:
+            #  if w.int_ext == 'e':
+                #  perimeter += w.length()
 
-        perimeter_m = perimeter * 0.3048
+        #  perimeter_m = perimeter * 0.3048
 
-        floor_surface.name(f"{self.name_for_ref()} Floor FFactor").ffactor(ffactor).area_m2(area_m2).perimeter_exposed(perimeter_m)
-        return floor_surface
+        #  floor_surface.name(f"{self.name_for_ref()} Floor FFactor").ffactor(ffactor).area_m2(area_m2).perimeter_exposed(perimeter_m)
+        #  return floor_surface
 
     def exterior_ceiling_outdoors(self, z_ft, construction) -> list[IdfBuildingSurface]:
         z = z_ft * 0.3048
@@ -989,14 +992,17 @@ def ceiling_split(lower_level_zones: list[Z], upper_level_zones: list[Z], z_ft: 
                     triangles = earclip(two_d_verticies)
                     triangle_num = 1
                     for triangle in triangles:
+                        ceiling_vertices = [(v[0], v[1], z_ft * 0.3048) for v in triangle]
+                        if signed_area == 0:
+                            continue
+
                         ceiling = IdfBuildingSurface()
 
                         ceiling.name(f"{lower_level_zone.name_for_ref()} Ceiling {ceiling_n}.{triangle_num}").surface_type("Roof")
                         ceiling.construction_name(roof_construction).zone_name(lower_level_zone.name).outside_boundary_condition("Outdoors")
                         ceiling.space_name(lower_level_zone.space_name)
 
-                        ceiling_vertices = [(v[0], v[1], z_ft * 0.3048) for v in triangle]
-                        assert signed_area(ceiling_vertices) > 0
+                        assert signed_area(ceiling_vertices) >= 0, f"{lower_level_zone.name_for_ref()} Ceiling {ceiling_n}.{triangle_num} signed area not > 0, got {signed_area(ceiling_vertices)} {len(ceiling_vertices)} vertices: {ceiling_vertices}"
                         ceiling.vertices(ceiling_vertices)
                         idf_surfaces.append(ceiling)
                         triangle_num += 1
@@ -1083,7 +1089,7 @@ def analyze_wall_group_2(wall_group: list[NamedWall]) -> list[WallResult]:
                 else:
                     p1 = transformer.to_2d(max(x1, x2))
                     p2 = transformer.to_2d(min(x1, x2))
-                return Wall(p1[0], p1[1], p2[0], p2[1], curr_wall.wall.int_ext)
+                return Wall(p1[0], p1[1], p2[0], p2[1])
 
             def other_wall_trans(x1, x2):
                 if transformed21 < transformed22:
@@ -1092,7 +1098,7 @@ def analyze_wall_group_2(wall_group: list[NamedWall]) -> list[WallResult]:
                 else:
                     p1 = transformer.to_2d(max(x1, x2))
                     p2 = transformer.to_2d(min(x1, x2))
-                return Wall(p1[0], p1[1], p2[0], p2[1], other_wall.wall.int_ext)
+                return Wall(p1[0], p1[1], p2[0], p2[1])
 
             # Need to maintain the proper direction on these.
 
@@ -1154,28 +1160,28 @@ def wall_analyze(wall_groups: list[list[NamedWall]]) -> list[WallResult]:
 
 class Rect:
     """x1, y1 is the bottom left corner of the rectangle"""
-    def __init__(self, x1, y1, w, h) -> None:
+    def __init__(self, x1: float, y1: float, w: float, h: float) -> None:
+        if w < 0:
+            raise ValueError(f"Width must be positive, got {w}")
+        if h < 0:
+            raise ValueError(f"Height must be positive, got {h}")
+
         self.x1 = x1
         self.y1 = y1
         self.w = w
         self.h = h
 
-        self.bottom = y1
-        self.top = y1 + h
-        self.left = x1
-        self.right = x1 + w
+        #  self.bottom = y1
+        #  self.top = y1 + h
+        #  self.left = x1
+        #  self.right = x1 + w
 
     def points(self):
         return [P(self.x1, self.y1), P(self.x1 + self.w, self.y1), P(self.x1 + self.w, self.y1 + self.h), P(self.x1, self.y1 + self.h)]
 
-    def walls(self, int_ext):
-        """int_ext is a list of length 4, each element is either 'i' or 'e'. Order is bottom, right, top, left."""
-        # check that length of int_ext equals 4
-        if len(int_ext) != 4:
-            raise ValueError('Length of int_ext must equal 4')
-
+    def walls(self):
         points = self.points()
-        return p2w(points, int_ext)
+        return p2w(points)
 
     def down(self, dy):
         return Rect(self.x1, self.y1 - dy, self.w, self.h)
@@ -1213,6 +1219,9 @@ class Rect:
     def right_edge(self):
         return self.x1 + self.w
 
+    def __str__(self) -> str:
+        return f"Rect(x1={self.x1}, y1={self.y1}, w={self.w}, h={self.h})"
+
 class P:
     def __init__(self, x, y) -> None:
         self.x = x
@@ -1247,17 +1256,13 @@ class P:
     def clone(self):
         return P(self.x, self.y)
 
-def p2w(points: list[P], int_ext: list[str]) -> list[Wall]:
+def p2w(points: list[P]) -> list[Wall]:
     walls = []
-    # Check that length of int_ext equals length of points
-    if len(points) != len(int_ext):
-        raise ValueError('Length of int_ext must equal length of points')
-
     for i in range(len(points)):
         if i == len(points) - 1:
-            walls.append(Wall(points[i].x, points[i].y, points[0].x, points[0].y, int_ext[i]))
+            walls.append(Wall(points[i].x, points[i].y, points[0].x, points[0].y))
         else:
-            walls.append(Wall(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, int_ext[i]))
+            walls.append(Wall(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y))
 
     return walls
 
@@ -1337,36 +1342,36 @@ class IdfZone:
         return "".join([line + "\n" for line in lines])
 
 
-def zones_from_file(filepath) -> list[tuple[Z, int]]:
-    """
-    Return tuple of the zone and the floor that it's on.
-    """
-    with open(filepath, encoding="utf-8") as file:
-        data = [line.split("\t") for line in file.read().splitlines()]
+#  def zones_from_file(filepath) -> list[tuple[Z, int]]:
+    #  """
+    #  Return tuple of the zone and the floor that it's on.
+    #  """
+    #  with open(filepath, encoding="utf-8") as file:
+        #  data = [line.split("\t") for line in file.read().splitlines()]
 
-    zones: list[tuple[Z, int]] = []
+    #  zones: list[tuple[Z, int]] = []
 
-    for row in data:
-        if len(row) < 8:
-            raise ValueError("Invalid data format")
+    #  for row in data:
+        #  if len(row) < 8:
+            #  raise ValueError("Invalid data format")
 
-        name = row[0]
-        floor = int(row[1])
-        points = []
-        for i in range(2, len(row), 2):
-            x = float(row[i])
-            y = float(row[i+1])
-            points.append(P(x, y))
+        #  name = row[0]
+        #  floor = int(row[1])
+        #  points = []
+        #  for i in range(2, len(row), 2):
+            #  x = float(row[i])
+            #  y = float(row[i+1])
+            #  points.append(P(x, y))
 
-        walls = p2w(points, ['i'] * len(points))
+        #  walls = p2w(points, ['i'] * len(points))
 
-        if name == 'A124':
-            zones.append((Z(name, walls, 0, 0, 0, ''), floor))
-        else:
-            zone_name = space_zone_map[name]
-            zones.append((Z(zone_name, walls, 0, 0, 0, name), floor))
+        #  if name == 'A124':
+            #  zones.append((Z(name, walls, 0, 0, 0, ''), floor))
+        #  else:
+            #  zone_name = space_zone_map[name]
+            #  zones.append((Z(zone_name, walls, 0, 0, 0, name), floor))
 
-    return zones
+    #  return zones
 
 def all_wall_data_from_zones(zones: list[Z], add_text) -> list[NamedWall]:
     zone_name_groups: dict[str, list[Z]] = {}
@@ -1424,10 +1429,10 @@ def order_walls_counter_clockwise(walls: list[Wall]) -> list[Wall]:
 
 
 def test_wall_ordering():
-    wall_1 = Wall(0, 0, 1, 0, 'i')
-    wall_2 = Wall(1, 0, 1, 1, 'i')
-    wall_3 = Wall(1, 1, 0, 1, 'i')
-    wall_4 = Wall(0, 1, 0, 0, 'i')
+    wall_1 = Wall(0, 0, 1, 0)
+    wall_2 = Wall(1, 0, 1, 1)
+    wall_3 = Wall(1, 1, 0, 1)
+    wall_4 = Wall(0, 1, 0, 0)
 
     # Try mixed up.
     walls = [wall_3, wall_2, wall_1, wall_4]
@@ -1464,8 +1469,8 @@ def wall_test_with_spaces():
     rect1 = Rect(0, 0, 10, 10)
     rect2 = Rect(10, 5, 10, 10)
 
-    space1 = Z("Zone 1", rect1.walls(['i', 'i', 'i', 'i']), 0, 0, 0, "Space 1")
-    space2 = Z("Zone 1", rect2.walls(['i', 'i', 'i', 'i']), 0, 0, 0, "Space 2")
+    space1 = Z("Zone 1", rect1.walls(), 0, 0, 0, "Space 1")
+    space2 = Z("Zone 1", rect2.walls(), 0, 0, 0, "Space 2")
 
     grouped_walls = group_walls(all_wall_data_from_zones([space1, space2], ''))
     matches = wall_analyze(grouped_walls)

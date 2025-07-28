@@ -681,6 +681,25 @@ class Z:
         floor_surface.vertices(vertices)
         return floor_surface
 
+    def area_m2(self) -> float:
+        """Calculate the area of the zone in square meters."""
+        return self.shapely_poly().area / 10.7639
+
+    def floor_ffactor_construction_name(self) -> str:
+        """Return the name for the FfactorConstruction for the floor."""
+        return f"{self.name_for_ref()} Floor FFactor"
+
+    def floor_ffactor_construction(self, ffactor: float, wall_results: list['WallResult']) -> FfactorConstruction:
+        ffactor_construction = FfactorConstruction()
+        perimeter_m = 0
+        associated_walls = [w for w in wall_results if w.wall.zone == self.name]
+
+        for wall in associated_walls:
+            if wall.overlap_wall is None:
+                perimeter_m += wall.wall.wall.length() * 0.3048
+
+        ffactor_construction.name(self.floor_ffactor_construction_name()).ffactor(ffactor).area_m2(self.area_m2()).perimeter_exposed(perimeter_m)
+        return ffactor_construction
 
     #  def ffactor_construction(self,ffactor):
         #  floor_surface = FfactorConstruction()
@@ -993,7 +1012,7 @@ def ceiling_split(lower_level_zones: list[Z], upper_level_zones: list[Z], z_ft: 
                     triangle_num = 1
                     for triangle in triangles:
                         ceiling_vertices = [(v[0], v[1], z_ft * 0.3048) for v in triangle]
-                        if signed_area == 0:
+                        if signed_area(ceiling_vertices) == 0:
                             continue
 
                         ceiling = IdfBuildingSurface()
@@ -1002,7 +1021,7 @@ def ceiling_split(lower_level_zones: list[Z], upper_level_zones: list[Z], z_ft: 
                         ceiling.construction_name(roof_construction).zone_name(lower_level_zone.name).outside_boundary_condition("Outdoors")
                         ceiling.space_name(lower_level_zone.space_name)
 
-                        assert signed_area(ceiling_vertices) >= 0, f"{lower_level_zone.name_for_ref()} Ceiling {ceiling_n}.{triangle_num} signed area not > 0, got {signed_area(ceiling_vertices)} {len(ceiling_vertices)} vertices: {ceiling_vertices}"
+                        assert signed_area(ceiling_vertices) > 0, f"{lower_level_zone.name_for_ref()} Ceiling {ceiling_n}.{triangle_num} signed area not > 0, got {signed_area(ceiling_vertices)} {len(ceiling_vertices)} vertices: {ceiling_vertices}"
                         ceiling.vertices(ceiling_vertices)
                         idf_surfaces.append(ceiling)
                         triangle_num += 1

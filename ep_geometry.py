@@ -692,6 +692,7 @@ class Z:
     def floor_ffactor_construction(self, ffactor: float, wall_results: list['WallResult']) -> FfactorConstruction:
         ffactor_construction = FfactorConstruction()
         perimeter_m = 0
+
         associated_walls = [w for w in wall_results if w.wall.zone == self.name]
 
         for wall in associated_walls:
@@ -1170,6 +1171,9 @@ def wall_analyze(wall_groups: list[list[NamedWall]]) -> list[WallResult]:
     """
     wall_groups is a list of lists of NamedWall objects. 
     Each inner list is a group of walls that are on the same line in the 2-D plane.
+
+    Returns:
+    [WallResult] which is a list of walls, the overlap wall, and overlap ratio.
     """
     all_matches: list[WallResult] = []
     for group in wall_groups:

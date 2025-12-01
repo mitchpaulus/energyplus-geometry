@@ -28,10 +28,10 @@ class WindowSurface:
         self._building_surface_name = ""
         self._frame_and_divider_name = ""
         self._multiplier = 1.0
-        self._starting_x = None
-        self._starting_z = None
-        self._length = None
-        self._height = None
+        self._starting_x = None # ft
+        self._starting_z = None # ft
+        self._length = None # ft
+        self._height = None # ft
 
     def __str__(self) -> str:
         if self._length is None or self._height is None or self._starting_x is None or self._starting_z is None:
@@ -53,48 +53,62 @@ class WindowSurface:
         lines.append(f"  {self._building_surface_name}, !- Building Surface Name\n")
         lines.append(f"  {self._frame_and_divider_name}, !- Frame and Divider Name\n")
         lines.append(f"  {self._multiplier}, !- Multiplier\n")
-        lines.append(f"  {self._starting_x}, !- Starting X Coordinate ({self._starting_x * 3.2808399:.1f} ft)\n")
-        lines.append(f"  {self._starting_z}, !- Starting Z Coordinate ({self._starting_z * 3.2808399:.1f} ft) \n")
-        lines.append(f"  {self._length}, !- Length ({self._length * 3.2808399:.1f} ft) \n")
-        lines.append(f"  {self._height}; !- Height ({self._height * 3.2808399:.1f} ft)\n")
+        lines.append(f"  {self._starting_x / 3.2808399}, !- Starting X Coordinate ({self._starting_x} ft)\n")
+        lines.append(f"  {self._starting_z / 3.2808399}, !- Starting Z Coordinate ({self._starting_z} ft) \n")
+        lines.append(f"  {self._length / 3.2808399}, !- Length ({self._length} ft) \n")
+        lines.append(f"  {self._height / 3.2808399}; !- Height ({self._height} ft)\n")
         return "".join(lines)
 
-    def name(self, name):
+    def name(self, name) -> 'WindowSurface':
         self._name = name
         return self
 
-    def construction_name(self, construction_name):
+    def construction_name(self, construction_name) -> 'WindowSurface':
         self._construction_name = construction_name
         return self
 
-    def building_surface_name(self, building_surface_name):
+    def building_surface_name(self, building_surface_name) -> 'WindowSurface':
         self._building_surface_name = building_surface_name
         return self
 
-    def frame_and_divider_name(self, frame_and_divider_name):
+    def frame_and_divider_name(self, frame_and_divider_name) -> 'WindowSurface':
         self._frame_and_divider_name = frame_and_divider_name
         return self
 
-    def multiplier(self, multiplier):
+    def multiplier(self, multiplier) -> 'WindowSurface':
         self._multiplier = multiplier
         return self
 
-    def starting_x(self, starting_x):
+    def starting_x(self, starting_x) -> 'WindowSurface':
         self._starting_x = starting_x
         return self
 
-    def starting_z(self, starting_z):
+    def starting_z(self, starting_z) -> 'WindowSurface':
         self._starting_z = starting_z
         return self
 
-    def length(self, length):
+    def length(self, length) -> 'WindowSurface':
         """Aka width"""
         self._length = length
         return self
 
-    def height(self, height):
+    def height(self, height) -> 'WindowSurface':
         self._height = height
         return self
+
+    def clone(self) -> 'WindowSurface':
+        """Return a copy of the WindowSurface."""
+        new_window = WindowSurface()
+        new_window._name = self._name
+        new_window._construction_name = self._construction_name
+        new_window._building_surface_name = self._building_surface_name
+        new_window._frame_and_divider_name = self._frame_and_divider_name
+        new_window._multiplier = self._multiplier
+        new_window._starting_x = self._starting_x
+        new_window._starting_z = self._starting_z
+        new_window._length = self._length
+        new_window._height = self._height
+        return new_window
 
 # Door {{{
 
@@ -1184,6 +1198,9 @@ def wall_analyze(wall_groups: list[list[NamedWall]]) -> list[WallResult]:
 class Rect:
     """x1, y1 is the bottom left corner of the rectangle"""
     def __init__(self, x1: float, y1: float, w: float, h: float) -> None:
+        '''
+        x1, y1, w, h in units of ft.
+        '''
         if w < 0:
             raise ValueError(f"Width must be positive, got {w}")
         if h < 0:
@@ -1202,14 +1219,14 @@ class Rect:
     def points(self):
         return [P(self.x1, self.y1), P(self.x1 + self.w, self.y1), P(self.x1 + self.w, self.y1 + self.h), P(self.x1, self.y1 + self.h)]
 
-    def walls(self):
+    def walls(self) -> list[Wall]:
         points = self.points()
         return p2w(points)
 
-    def down(self, dy):
+    def down(self, dy) -> 'Rect':
         return Rect(self.x1, self.y1 - dy, self.w, self.h)
 
-    def up(self, dy):
+    def up(self, dy) -> 'Rect':
         return Rect(self.x1, self.y1 + dy, self.w, self.h)
 
     def left(self, dx):

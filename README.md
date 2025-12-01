@@ -1,5 +1,5 @@
 ```python
-from ep_geometry import P, p2w, Z
+from ep_geometry import P, p2w, Z, all_wall_data_from_zones, group_walls, wall_analyze, print_idf_wall, ceiling_split
 
 p1 = P(0, 0)
 p2 = p1.right(3)
@@ -26,7 +26,7 @@ for roof in roof_surfaces:
 
 ffactor_val = 1.26
 for zone in floor_1_zones:
-    ffactor_construction = zone.floor_ffactor_construction(ffactor_val, wall_results)
+    ffactor_construction = zone.floor_ffactor_construction(ffactor_val, matches)
     print(ffactor_construction, end='\n')
 
 for zone in floor_1_zones:

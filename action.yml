@@ -1,0 +1,8 @@
+name: "EnergyPlus Geometry"
+description: "Expose ep_geometry.py on PYTHONPATH for downstream workflow steps"
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: echo "PYTHONPATH=${GITHUB_ACTION_PATH}:$PYTHONPATH" >> "$GITHUB_ENV"

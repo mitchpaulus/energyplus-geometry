@@ -60,3 +60,45 @@ for zone in floor_1_zones:
 for zone in floor_1_zones:
     print(zone.idf_floor(0, zone.floor_ffactor_construction_name()), end="\n")
 ```
+
+## Layout debugging helpers
+
+Sanity-check a plan layout while building it. These work on the 2-D footprint
+(in feet) of either a `Z` (zone, with its origin applied) or a `Rect`.
+
+```python
+from ep_geometry import (
+    bounds, print_bounds, assert_no_overlaps,
+    assert_aligned_top, assert_aligned_bottom, assert_aligned_left, assert_aligned_right,
+    assert_adjacent, debug_svg,
+)
+
+# Inspect one zone; returns a named tuple:
+b = bounds(kitchen)
+print(b.left, b.right, b.bottom, b.top, b.width, b.height, b.area)
+
+# Print a table of all zones:
+print_bounds([kitchen, living, bedroom])
+
+# Assertions raise AssertionError with the offending names/values:
+assert_no_overlaps([kitchen, living, bedroom])   # tol in ft^2
+assert_aligned_top(kitchen, living)              # tops share a y (within tol ft)
+assert_aligned_right(kitchen, bedroom)           # also *_bottom / *_left
+assert_adjacent(kitchen, living, side="right")   # side is relative to the first arg
+
+# Draw a debugging SVG straight from the zone polygons:
+debug_svg([kitchen, living, bedroom], "layout.svg")
+```
+
+Notes:
+- `bounds().area` is the true polygon area (correct for L-shapes), not the
+  bounding-box area.
+- `assert_no_overlaps` skips pairs that share the same `Z.name` (the same zone
+  split across levels is allowed to overlap in plan).
+- `assert_adjacent(a, b, side=...)`: `side` is relative to `a` ("right" means
+  `b` is to the right of `a`). It checks both that the touching edges coincide
+  (`tol` ft) and that they share at least `min_overlap` ft of edge, so a bare
+  corner touch does not count as adjacent.
+- `debug_svg(zones, file, show_bounds=True, show_vertices=True, show_grid=True,
+  scale=8.0, ...)`: `file` may be a path or an open file object; `scale` is
+  pixels per foot and north is up.

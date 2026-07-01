@@ -5,6 +5,7 @@ import random
 import uuid
 import shapely
 
+from collections import namedtuple
 from typing import Union
 
 class WindowData:
@@ -1518,3 +1519,299 @@ def wall_test_with_spaces():
     for match in matches:
         wall_surface = print_idf_wall(match, 10, 0, "Exterior Wall")
         print(str(wall_surface))
+
+
+# Debugging / assertion helpers {{{
+#
+# These helpers work on the plan-view (2-D, feet) footprint of a layout. They
+# accept either a `Z` (zone, with its origin applied) or a `Rect`. They are
+# meant for sanity-checking a layout while building it up, not for generating
+# idf output.
+
+Bounds = namedtuple("Bounds", ["left", "right", "bottom", "top", "width", "height", "area"])
+
+
+def _obj_name(obj, fallback: str) -> str:
+    """Best-effort display name for a Z or Rect (Rects are unnamed)."""
+    if isinstance(obj, Z):
+        return obj.name_for_ref()
+    name = getattr(obj, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    return fallback
+
+
+def _poly_points(obj) -> list[tuple[float, float]]:
+    """Plan-view (x, y) vertices of a Z or Rect, in feet, with origin applied."""
+    if isinstance(obj, Z):
+        coords = list(obj.shapely_poly().exterior.coords)
+        # shapely closes the ring by repeating the first point; drop it.
+        if len(coords) > 1 and coords[0] == coords[-1]:
+            coords = coords[:-1]
+        return [(float(x), float(y)) for x, y in coords]
+    if isinstance(obj, Rect):
+        return [(p.x, p.y) for p in obj.points()]
+    raise TypeError(f"Expected Z or Rect, got {type(obj).__name__}")
+
+
+def _as_poly(obj):
+    """A shapely Polygon for the plan-view footprint of a Z or Rect, in feet."""
+    return shapely.geometry.Polygon(_poly_points(obj))
+
+
+def bounds(obj) -> Bounds:
+    """Axis-aligned bounding box (feet) of a Z or Rect.
+
+    Returns a named tuple with .left, .right, .bottom, .top, .width, .height and
+    .area. `area` is the true polygon area (not the bounding-box area), so it is
+    exact for rectangular zones and correct for L-shapes etc.
+    """
+    if isinstance(obj, Z):
+        poly = obj.shapely_poly()
+        minx, miny, maxx, maxy = poly.bounds
+        area = poly.area
+    elif isinstance(obj, Rect):
+        minx, miny, maxx, maxy = obj.x1, obj.y1, obj.x1 + obj.w, obj.y1 + obj.h
+        area = obj.w * obj.h
+    else:
+        raise TypeError(f"Expected Z or Rect, got {type(obj).__name__}")
+    return Bounds(minx, maxx, miny, maxy, maxx - minx, maxy - miny, area)
+
+
+def print_bounds(zones, file=sys.stdout) -> None:
+    """Print a table of left/right/bottom/top/width/height/area (feet) per zone."""
+    rows = [(_obj_name(z, f"[{i}]"), bounds(z)) for i, z in enumerate(zones)]
+    name_w = max([len("Name")] + [len(n) for n, _ in rows])
+
+    headers = ["left", "right", "bottom", "top", "width", "height", "area"]
+    col_w = 10
+    header = f"{'Name':<{name_w}}  " + "".join(f"{h:>{col_w}}" for h in headers)
+    print(header, file=file)
+    print("-" * len(header), file=file)
+    for name, b in rows:
+        vals = [b.left, b.right, b.bottom, b.top, b.width, b.height, b.area]
+        line = f"{name:<{name_w}}  " + "".join(f"{v:>{col_w}.2f}" for v in vals)
+        print(line, file=file)
+
+
+def assert_no_overlaps(zones, tol: float = 1e-4) -> None:
+    """Raise AssertionError if any two zones overlap by more than `tol` ft^2.
+
+    Zones that share the same `Z.name` are skipped (they may be the same zone
+    split across levels, which is legitimately allowed to overlap in plan).
+    """
+    entries = [(_obj_name(z, f"[{i}]"), z, _as_poly(z)) for i, z in enumerate(zones)]
+
+    problems = []
+    for i in range(len(entries)):
+        for j in range(i + 1, len(entries)):
+            ni, zi, pi = entries[i]
+            nj, zj, pj = entries[j]
+            if isinstance(zi, Z) and isinstance(zj, Z) and zi.name == zj.name:
+                continue
+            if pi.intersects(pj):
+                inter = pi.intersection(pj)
+                if inter.area > tol:
+                    problems.append((ni, nj, inter.area))
+
+    if problems:
+        lines = "\n".join(
+            f"  {a} <-> {b}: overlap area {area:.4f} ft^2" for a, b, area in problems
+        )
+        raise AssertionError(f"Overlapping zones found:\n{lines}")
+
+
+def _assert_aligned(objs, edge: str, tol: float) -> None:
+    entries = [(_obj_name(o, f"arg[{i}]"), getattr(bounds(o), edge)) for i, o in enumerate(objs)]
+    if len(entries) < 2:
+        return
+    values = [v for _, v in entries]
+    spread = max(values) - min(values)
+    if spread > tol:
+        lines = "\n".join(f"  {n}: {edge} = {v:.4f} ft" for n, v in entries)
+        raise AssertionError(
+            f"{edge} edges not aligned (spread {spread:.4f} ft > tol {tol}):\n{lines}"
+        )
+
+
+def assert_aligned_top(*rects_or_zones, tol: float = 1e-6) -> None:
+    """Assert every argument's top edge sits at the same y (within tol)."""
+    _assert_aligned(rects_or_zones, "top", tol)
+
+
+def assert_aligned_bottom(*rects_or_zones, tol: float = 1e-6) -> None:
+    """Assert every argument's bottom edge sits at the same y (within tol)."""
+    _assert_aligned(rects_or_zones, "bottom", tol)
+
+
+def assert_aligned_left(*rects_or_zones, tol: float = 1e-6) -> None:
+    """Assert every argument's left edge sits at the same x (within tol)."""
+    _assert_aligned(rects_or_zones, "left", tol)
+
+
+def assert_aligned_right(*rects_or_zones, tol: float = 1e-6) -> None:
+    """Assert every argument's right edge sits at the same x (within tol)."""
+    _assert_aligned(rects_or_zones, "right", tol)
+
+
+def assert_adjacent(a, b, side: str = "right", tol: float = 1e-4, min_overlap: float = 1e-4) -> None:
+    """Assert that `b` shares an edge with `a` on the given side of `a`.
+
+    `side` is relative to `a`: "right" means `b` is to the right of `a` (a's
+    right edge meets b's left edge), and likewise "left", "top", "bottom".
+
+    Two conditions must hold:
+      * the touching edges coincide within `tol` feet, and
+      * the shared span (perpendicular overlap of the two footprints) is at
+        least `min_overlap` feet, so a mere corner touch does not count.
+    """
+    ba, bb = bounds(a), bounds(b)
+    na, nb = _obj_name(a, "a"), _obj_name(b, "b")
+    side = side.lower()
+
+    if side == "right":
+        edge_a, edge_b = ba.right, bb.left
+        span = min(ba.top, bb.top) - max(ba.bottom, bb.bottom)
+    elif side == "left":
+        edge_a, edge_b = ba.left, bb.right
+        span = min(ba.top, bb.top) - max(ba.bottom, bb.bottom)
+    elif side == "top":
+        edge_a, edge_b = ba.top, bb.bottom
+        span = min(ba.right, bb.right) - max(ba.left, bb.left)
+    elif side == "bottom":
+        edge_a, edge_b = ba.bottom, bb.top
+        span = min(ba.right, bb.right) - max(ba.left, bb.left)
+    else:
+        raise ValueError(f"side must be one of right/left/top/bottom, got {side!r}")
+
+    gap = abs(edge_a - edge_b)
+    if gap > tol:
+        raise AssertionError(
+            f"{na} and {nb} are not adjacent on the {side}: edges {edge_a:.4f} vs "
+            f"{edge_b:.4f} ft differ by {gap:.4f} ft (tol {tol})"
+        )
+    if span < min_overlap:
+        raise AssertionError(
+            f"{na} and {nb} touch on the {side} but only share {span:.4f} ft of edge "
+            f"(min_overlap {min_overlap})"
+        )
+
+
+_SVG_COLORS = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4",
+    "#f032e6", "#bfef45", "#469990", "#9a6324", "#800000", "#808000",
+    "#000075", "#e6beff", "#aaffc3", "#ffd8b1",
+]
+
+
+def _svg_escape(text: str) -> str:
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def debug_svg(zones, file, show_bounds: bool = True, show_vertices: bool = True,
+              show_grid: bool = True, padding_ft: float = 5.0, scale: float = 8.0,
+              grid_ft: float = 10.0) -> None:
+    """Write a debugging SVG of the zone footprints.
+
+    Each zone gets a bold colored fill/stroke, a centered label (name + area),
+    and optionally its vertices, bounding box, and a light foot grid. Draws
+    directly from the zone polygons; `scale` is pixels per foot and y is flipped
+    so the drawing reads with north up.
+
+    `file` may be a path string or an already-open text file object.
+    `zones` may contain `Z` and/or `Rect` objects.
+    """
+    polys = [(_obj_name(z, f"[{i}]"), _poly_points(z), bounds(z)) for i, z in enumerate(zones)]
+    if not polys:
+        raise ValueError("debug_svg requires at least one zone")
+
+    minx = min(b.left for _, _, b in polys)
+    maxx = max(b.right for _, _, b in polys)
+    miny = min(b.bottom for _, _, b in polys)
+    maxy = max(b.top for _, _, b in polys)
+
+    total_w = (maxx - minx + 2 * padding_ft) * scale
+    total_h = (maxy - miny + 2 * padding_ft) * scale
+
+    def sx(x: float) -> float:
+        return (x - minx + padding_ft) * scale
+
+    def sy(y: float) -> float:
+        # Flip so +y (north) is up.
+        return (maxy - y + padding_ft) * scale
+
+    out = []
+    out.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_w:.1f}" '
+        f'height="{total_h:.1f}" viewBox="0 0 {total_w:.1f} {total_h:.1f}">'
+    )
+    out.append('<rect x="0" y="0" width="100%" height="100%" fill="white"/>')
+
+    if show_grid and grid_ft > 0:
+        import math
+        gx = math.floor(minx / grid_ft) * grid_ft
+        while gx <= maxx:
+            out.append(
+                f'<line x1="{sx(gx):.1f}" y1="{sy(maxy):.1f}" x2="{sx(gx):.1f}" '
+                f'y2="{sy(miny):.1f}" stroke="#e8e8e8" stroke-width="1"/>'
+            )
+            gx += grid_ft
+        gy = math.floor(miny / grid_ft) * grid_ft
+        while gy <= maxy:
+            out.append(
+                f'<line x1="{sx(minx):.1f}" y1="{sy(gy):.1f}" x2="{sx(maxx):.1f}" '
+                f'y2="{sy(gy):.1f}" stroke="#e8e8e8" stroke-width="1"/>'
+            )
+            gy += grid_ft
+
+    for idx, (name, pts, b) in enumerate(polys):
+        color = _SVG_COLORS[idx % len(_SVG_COLORS)]
+        point_str = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in pts)
+        out.append(
+            f'<polygon points="{point_str}" fill="{color}" fill-opacity="0.30" '
+            f'stroke="{color}" stroke-width="2.5" stroke-linejoin="round"/>'
+        )
+
+        if show_bounds:
+            out.append(
+                f'<rect x="{sx(b.left):.1f}" y="{sy(b.top):.1f}" '
+                f'width="{(b.width) * scale:.1f}" height="{(b.height) * scale:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="1" '
+                f'stroke-dasharray="4,3" stroke-opacity="0.6"/>'
+            )
+
+        if show_vertices:
+            for x, y in pts:
+                out.append(
+                    f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="3" '
+                    f'fill="{color}" stroke="white" stroke-width="1"/>'
+                )
+
+        cx = (b.left + b.right) / 2
+        cy = (b.bottom + b.top) / 2
+        label = _svg_escape(name)
+        out.append(
+            f'<text x="{sx(cx):.1f}" y="{sy(cy):.1f}" font-family="sans-serif" '
+            f'font-size="13" font-weight="bold" text-anchor="middle" '
+            f'fill="#111">{label}</text>'
+        )
+        out.append(
+            f'<text x="{sx(cx):.1f}" y="{sy(cy) + 14:.1f}" font-family="sans-serif" '
+            f'font-size="10" text-anchor="middle" fill="#333">'
+            f'{b.area:.0f} ft&#178;</text>'
+        )
+
+    out.append("</svg>")
+    svg = "\n".join(out)
+
+    if hasattr(file, "write"):
+        file.write(svg)
+    else:
+        with open(file, "w", encoding="utf-8") as f:
+            f.write(svg)
+# }}}

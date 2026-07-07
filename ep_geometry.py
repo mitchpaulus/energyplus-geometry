@@ -1212,22 +1212,34 @@ class Rect:
     """x1, y1 is the bottom left corner of the rectangle"""
     def __init__(self, x1: float, y1: float, w: float, h: float) -> None:
         '''
-        x1, y1, w, h in units of ft.
+        x1, y1, w, h in units of ft. Negative height or width switches the direction and meaning of the x1 and y1 coordinates.
         '''
         if w < 0:
-            raise ValueError(f"Width must be positive, got {w}")
-        if h < 0:
-            raise ValueError(f"Height must be positive, got {h}")
+            self.w = -w
+            self.x1 = x1 - self.w
+        else:
+            self.x1 = x1
+            self.w = w
 
-        self.x1 = x1
-        self.y1 = y1
-        self.w = w
-        self.h = h
+        if h < 0:
+            self.h = -h
+            self.y1 = y1 - self.h 
+        else:
+            self.h = h
+            self.y1 = y1
 
         #  self.bottom = y1
         #  self.top = y1 + h
         #  self.left = x1
         #  self.right = x1 + w
+
+    @classmethod
+    def from_corners(cls, x1: float, y1: float, x2: float, y2: float) -> 'Rect':
+        '''
+        Build a Rect from two opposite corners (x1, y1) and (x2, y2), in units of
+        ft. The corners may be given in any order.
+        '''
+        return cls(x1, y1, x2 - x1, y2 - y1)
 
     def points(self):
         return [P(self.x1, self.y1), P(self.x1 + self.w, self.y1), P(self.x1 + self.w, self.y1 + self.h), P(self.x1, self.y1 + self.h)]
@@ -1271,6 +1283,12 @@ class Rect:
 
     def right_edge(self):
         return self.x1 + self.w
+
+    def width(self):
+        return self.w
+
+    def height(self):
+        return self.h
 
     def __str__(self) -> str:
         return f"Rect(x1={self.x1}, y1={self.y1}, w={self.w}, h={self.h})"

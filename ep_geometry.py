@@ -1545,6 +1545,38 @@ def _polygon_to_walls(poly, simplify_tol: float = 1e-9) -> list[Wall]:
     return order_walls_counter_clockwise(p2w(points))
 
 
+def enclosed_walls(surrounders: list, seed_x: float, seed_y: float,
+                   simplify_tol: float = 1e-9) -> list[Wall]:
+    """
+    Given a list of surrounding polygons (Rect or Z) that fully enclose the
+    point (seed_x, seed_y), return the boundary of the enclosed void as a list of
+    Wall in counter-clockwise order, suitable for building a Z (zone).
+
+    The void is the hole in the union of the surrounders that contains the seed
+    point. Raises ValueError if the seed point is not enclosed by a hole (e.g.
+    the surrounders do not fully ring the point, or the point lies inside one of
+    them).
+    """
+    from shapely.ops import unary_union
+
+    seed = shapely.geometry.Point(seed_x, seed_y)
+    merged = unary_union([_as_poly(s) for s in surrounders])
+
+    # Collect every interior ring across the union (a MultiPolygon can contribute
+    # holes from more than one part) and find the one containing the seed.
+    parts = merged.geoms if merged.geom_type == "MultiPolygon" else [merged]
+    for part in parts:
+        for ring in part.interiors:
+            void = shapely.geometry.Polygon(ring)
+            if void.contains(seed):
+                return _polygon_to_walls(void, simplify_tol)
+
+    raise ValueError(
+        f"Point ({seed_x}, {seed_y}) is not enclosed by a void in the union of "
+        "the surrounders; they must fully ring the point."
+    )
+
+
 def test_wall_ordering():
     wall_1 = Wall(0, 0, 1, 0)
     wall_2 = Wall(1, 0, 1, 1)
@@ -1596,6 +1628,38 @@ def test_union_walls():
             Rect(20, 0, 10, 30),  # right
         ])
         assert False, "Expected ValueError for hole-enclosing rects"
+    except ValueError:
+        pass
+
+
+def test_enclosed_walls():
+    # Four rects ring a 10x10 void in the middle: outer 30x30, hole from (10,10) to (20,20).
+    surrounders = [
+        Rect(0, 0, 30, 10),   # bottom band
+        Rect(0, 20, 30, 10),  # top band
+        Rect(0, 0, 10, 30),   # left band
+        Rect(20, 0, 10, 30),  # right band
+    ]
+
+    walls = enclosed_walls(surrounders, 15, 15)
+
+    # The void is a 10x10 square -> 4 walls, area 100, CCW (positive area).
+    assert len(walls) == 4, f"Expected 4 walls, got {len(walls)}: {walls}"
+    assert signed_area_from_walls(walls) > 0
+    assert abs(signed_area_from_walls(walls) - 100) < 1e-6
+
+    # Closed ring, head-to-tail.
+    for a, b in zip(walls, walls[1:] + walls[:1]):
+        assert abs(a.x2 - b.x1) < 1e-6 and abs(a.y2 - b.y1) < 1e-6
+
+    # It builds a usable zone.
+    z = Z("Core", walls, 0, 0, 0, "Core")
+    assert abs(z.area_m2() - 100 / 10.7639) < 1e-6
+
+    # Seed outside any enclosed void -> error.
+    try:
+        enclosed_walls(surrounders, 5, 5)  # inside the left band, not the void
+        assert False, "Expected ValueError for un-enclosed seed"
     except ValueError:
         pass
 

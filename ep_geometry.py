@@ -1499,6 +1499,52 @@ def order_walls_counter_clockwise(walls: list[Wall]) -> list[Wall]:
     return new_walls
 
 
+def union_walls(rects: list[Rect], simplify_tol: float = 1e-9) -> list[Wall]:
+    """
+    Take a list of Rect, union them into a single polygon, and return the
+    exterior boundary as a list of Wall in counter-clockwise order suitable for
+    building a Z (zone).
+
+    Raises ValueError if the rects do not union into a single simple polygon
+    (i.e. they are disjoint, producing a MultiPolygon, or they enclose a hole).
+    """
+    from shapely.ops import unary_union
+
+    polys = [shapely.geometry.Polygon([(p.x, p.y) for p in r.points()]) for r in rects]
+    merged = unary_union(polys)
+
+    if merged.geom_type != "Polygon":
+        raise ValueError(
+            f"Rects do not form a single connected region (got {merged.geom_type}); "
+            "cannot produce a single zone boundary."
+        )
+    if merged.interiors:
+        raise ValueError(
+            "Union of rects encloses a hole; a zone boundary must be a simple polygon."
+        )
+
+    return _polygon_to_walls(merged, simplify_tol)
+
+
+def _polygon_to_walls(poly, simplify_tol: float = 1e-9) -> list[Wall]:
+    """
+    Convert a simple (hole-free) shapely Polygon into a CCW-ordered list of Wall.
+
+    Orients the exterior CCW (shapely defaults exteriors to clockwise), drops the
+    collinear vertices left where flush edges meet, and strips the repeated
+    closing vertex before building walls.
+    """
+    from shapely.geometry.polygon import orient
+
+    poly = orient(poly, sign=1.0)
+    if simplify_tol is not None:
+        poly = poly.simplify(simplify_tol)
+
+    coords = list(poly.exterior.coords)[:-1]
+    points = [P(x, y) for x, y in coords]
+    return order_walls_counter_clockwise(p2w(points))
+
+
 def test_wall_ordering():
     wall_1 = Wall(0, 0, 1, 0)
     wall_2 = Wall(1, 0, 1, 1)
@@ -1514,6 +1560,44 @@ def test_wall_ordering():
     assert ordered_wall_2 == wall_4
     assert ordered_wall_3 == wall_1
     assert ordered_wall_4 == wall_2
+
+
+def test_union_walls():
+    # Two rects sharing a flush edge form an L-shape.
+    rect1 = Rect(0, 0, 10, 10)
+    rect2 = Rect(10, 0, 10, 5)
+
+    walls = union_walls([rect1, rect2])
+
+    # L-shape has 6 corners -> 6 walls, no leftover collinear junction vertices.
+    assert len(walls) == 6, f"Expected 6 walls, got {len(walls)}: {walls}"
+
+    # CCW order => positive signed area, area == sum of rect areas (10*10 + 10*5).
+    assert signed_area_from_walls(walls) > 0
+    assert abs(signed_area_from_walls(walls) - 150) < 1e-6
+
+    # Walls must be connected head-to-tail (closed ring).
+    for a, b in zip(walls, walls[1:] + walls[:1]):
+        assert abs(a.x2 - b.x1) < 1e-6 and abs(a.y2 - b.y1) < 1e-6
+
+    # Disjoint rects cannot form a single zone.
+    try:
+        union_walls([Rect(0, 0, 5, 5), Rect(100, 100, 5, 5)])
+        assert False, "Expected ValueError for disjoint rects"
+    except ValueError:
+        pass
+
+    # A ring of rects enclosing a hole is rejected.
+    try:
+        union_walls([
+            Rect(0, 0, 30, 10),   # bottom
+            Rect(0, 20, 30, 10),  # top
+            Rect(0, 0, 10, 30),   # left
+            Rect(20, 0, 10, 30),  # right
+        ])
+        assert False, "Expected ValueError for hole-enclosing rects"
+    except ValueError:
+        pass
 
 
 def gen_windows(window_data: WindowData, win_height_ft = 6.0, z_ft = 4.0):

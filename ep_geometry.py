@@ -488,7 +488,7 @@ def overlap(p11, p12, p21, p22):
     return (max(0, x2 - x1), x1, x2)
 
 
-def p_2d_to_1d(*args):
+def p_2d_to_1d(*args) -> float:
     if len(args) == 1 and isinstance(args[0], P):
         p = args[0]
         x = p.x
@@ -1268,33 +1268,33 @@ class P:
         self.x = x
         self.y = y
 
-    def right(self, dx):
+    def right(self, dx) -> 'P':
         return P(self.x + dx, self.y)
 
-    def left(self, dx):
+    def left(self, dx) -> 'P':
         return P(self.x - dx, self.y)
 
-    def up(self, dy):
+    def up(self, dy) -> 'P':
         return P(self.x, self.y + dy)
 
-    def down(self, dy):
+    def down(self, dy) -> 'P':
         return P(self.x, self.y - dy)
 
-    def set_x(self, x):
+    def set_x(self, x) -> 'P':
         return P(x, self.y)
 
-    def set_y(self, y):
+    def set_y(self, y) -> 'P':
         return P(self.x, y)
 
     # Override equality operator
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         tol = 1e-6
         return abs(self.x - other.x) < tol and abs(self.y - other.y) < tol
 
-    def to_1d(self):
+    def to_1d(self) -> float:
         return p_2d_to_1d(self)
 
-    def clone(self):
+    def clone(self) -> 'P':
         return P(self.x, self.y)
 
 def p2w(points: list[P]) -> list[Wall]:

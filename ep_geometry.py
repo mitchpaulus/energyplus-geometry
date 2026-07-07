@@ -610,6 +610,18 @@ class Z:
         space_name = space_name if space_name is not None else name
         return Z(name, new_walls, self.origin_x_ft, self.origin_y_ft, self.origin_z_ft, space_name)
 
+    def right_edge(self):
+        return right_edge(self.walls)
+
+    def left_edge(self):
+        return left_edge(self.walls)
+
+    def bottom_edge(self):
+        return min(wall.y1 for wall in self.walls)
+
+    def top_edge(self):
+        return max(wall.y1 for wall in self.walls)
+
     def name_for_ref(self):
         if self.space_name.strip() == '':
             return self.name

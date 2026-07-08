@@ -1525,28 +1525,31 @@ def order_walls_counter_clockwise(walls: list[Wall]) -> list[Wall]:
     return new_walls
 
 
-def union_walls(rects: list[Rect], simplify_tol: float = 1e-9) -> list[Wall]:
+def union_walls(shapes: list, simplify_tol: float = 1e-9) -> list[Wall]:
     """
-    Take a list of Rect, union them into a single polygon, and return the
+    Take a list of shapes, union them into a single polygon, and return the
     exterior boundary as a list of Wall in counter-clockwise order suitable for
     building a Z (zone).
 
-    Raises ValueError if the rects do not union into a single simple polygon
+    Each shape may be a Rect, a Z, or a list of Wall (e.g. the boundary returned
+    by enclosed_walls), so a void polygon can be merged back with other shapes.
+
+    Raises ValueError if the shapes do not union into a single simple polygon
     (i.e. they are disjoint, producing a MultiPolygon, or they enclose a hole).
     """
     from shapely.ops import unary_union
 
-    polys = [shapely.geometry.Polygon([(p.x, p.y) for p in r.points()]) for r in rects]
+    polys = [_as_poly(s) for s in shapes]
     merged = unary_union(polys)
 
     if merged.geom_type != "Polygon":
         raise ValueError(
-            f"Rects do not form a single connected region (got {merged.geom_type}); "
+            f"Shapes do not form a single connected region (got {merged.geom_type}); "
             "cannot produce a single zone boundary."
         )
     if merged.interiors:
         raise ValueError(
-            "Union of rects encloses a hole; a zone boundary must be a simple polygon."
+            "Union of shapes encloses a hole; a zone boundary must be a simple polygon."
         )
 
     return _polygon_to_walls(merged, simplify_tol)
@@ -1574,9 +1577,13 @@ def _polygon_to_walls(poly, simplify_tol: float = 1e-9) -> list[Wall]:
 def enclosed_walls(surrounders: list, seed_x: float, seed_y: float,
                    simplify_tol: float = 1e-9) -> list[Wall]:
     """
-    Given a list of surrounding polygons (Rect or Z) that fully enclose the
-    point (seed_x, seed_y), return the boundary of the enclosed void as a list of
-    Wall in counter-clockwise order, suitable for building a Z (zone).
+    Given a list of surrounding polygons that fully enclose the point
+    (seed_x, seed_y), return the boundary of the enclosed void as a list of Wall
+    in counter-clockwise order, suitable for building a Z (zone).
+
+    Each surrounder may be a Rect, a Z, or a list of Wall (a closed ring, e.g.
+    the boundary returned by union_walls or enclosed_walls itself); a list[Wall]
+    is treated just like an additional Rect or Z.
 
     The void is the hole in the union of the surrounders that contains the seed
     point. Raises ValueError if the seed point is not enclosed by a hole (e.g.
@@ -1646,16 +1653,24 @@ def test_union_walls():
         pass
 
     # A ring of rects enclosing a hole is rejected.
+    ring = [
+        Rect(0, 0, 30, 10),   # bottom
+        Rect(0, 20, 30, 10),  # top
+        Rect(0, 0, 10, 30),   # left
+        Rect(20, 0, 10, 30),  # right
+    ]
     try:
-        union_walls([
-            Rect(0, 0, 30, 10),   # bottom
-            Rect(0, 20, 30, 10),  # top
-            Rect(0, 0, 10, 30),   # left
-            Rect(20, 0, 10, 30),  # right
-        ])
+        union_walls(ring)
         assert False, "Expected ValueError for hole-enclosing rects"
     except ValueError:
         pass
+
+    # A void carved out with enclosed_walls (a list[Wall]) can be merged back
+    # into the ring to fill the hole, yielding a solid 30x30 square.
+    void = enclosed_walls(ring, 15, 15)
+    filled = union_walls(ring + [void])
+    assert len(filled) == 4, f"Expected 4 walls, got {len(filled)}: {filled}"
+    assert abs(signed_area_from_walls(filled) - 900) < 1e-6
 
 
 def test_enclosed_walls():
@@ -1688,6 +1703,18 @@ def test_enclosed_walls():
         assert False, "Expected ValueError for un-enclosed seed"
     except ValueError:
         pass
+
+    # A surrounder may itself be a list[Wall], treated like an extra Rect/Z.
+    # Replace the left band Rect with its wall loop; result must be identical.
+    mixed = [
+        Rect(0, 0, 30, 10).walls(),  # bottom band as a list[Wall]
+        Rect(0, 20, 30, 10),
+        Rect(0, 0, 10, 30),
+        Rect(20, 0, 10, 30),
+    ]
+    mixed_walls = enclosed_walls(mixed, 15, 15)
+    assert len(mixed_walls) == 4
+    assert abs(signed_area_from_walls(mixed_walls) - 100) < 1e-6
 
 
 def gen_windows(window_data: WindowData, win_height_ft = 6.0, z_ft = 4.0):
@@ -1746,7 +1773,11 @@ def _obj_name(obj, fallback: str) -> str:
 
 
 def _poly_points(obj) -> list[tuple[float, float]]:
-    """Plan-view (x, y) vertices of a Z or Rect, in feet, with origin applied."""
+    """Plan-view (x, y) vertices of a Z, Rect, or list of Wall, in feet.
+
+    A list of Wall is treated as a closed ring; each wall contributes its start
+    point (walls are connected head-to-tail).
+    """
     if isinstance(obj, Z):
         coords = list(obj.shapely_poly().exterior.coords)
         # shapely closes the ring by repeating the first point; drop it.
@@ -1755,7 +1786,9 @@ def _poly_points(obj) -> list[tuple[float, float]]:
         return [(float(x), float(y)) for x, y in coords]
     if isinstance(obj, Rect):
         return [(p.x, p.y) for p in obj.points()]
-    raise TypeError(f"Expected Z or Rect, got {type(obj).__name__}")
+    if isinstance(obj, list) and obj and all(isinstance(w, Wall) for w in obj):
+        return [(w.x1, w.y1) for w in obj]
+    raise TypeError(f"Expected Z, Rect, or list of Wall, got {type(obj).__name__}")
 
 
 def _as_poly(obj):

@@ -1575,7 +1575,7 @@ def _polygon_to_walls(poly, simplify_tol: float = 1e-9) -> list[Wall]:
 
 
 def enclosed_walls(surrounders: list, seed_x: float, seed_y: float,
-                   simplify_tol: float = 1e-9) -> list[Wall]:
+                   simplify_tol: float = 1e-9, debug_svg_path=None) -> list[Wall]:
     """
     Given a list of surrounding polygons that fully enclose the point
     (seed_x, seed_y), return the boundary of the enclosed void as a list of Wall
@@ -1589,6 +1589,11 @@ def enclosed_walls(surrounders: list, seed_x: float, seed_y: float,
     point. Raises ValueError if the seed point is not enclosed by a hole (e.g.
     the surrounders do not fully ring the point, or the point lies inside one of
     them).
+
+    If `debug_svg_path` is given, a debugging SVG is written to that path showing
+    every surrounder, the seed point (as a crosshair), and -- when found -- the
+    resulting void, so a failure is easy to eyeball. The SVG is written whether
+    or not the point is enclosed.
     """
     from shapely.ops import unary_union
 
@@ -1597,17 +1602,33 @@ def enclosed_walls(surrounders: list, seed_x: float, seed_y: float,
 
     # Collect every interior ring across the union (a MultiPolygon can contribute
     # holes from more than one part) and find the one containing the seed.
+    void_walls = None
     parts = merged.geoms if merged.geom_type == "MultiPolygon" else [merged]
     for part in parts:
         for ring in part.interiors:
             void = shapely.geometry.Polygon(ring)
             if void.contains(seed):
-                return _polygon_to_walls(void, simplify_tol)
+                void_walls = _polygon_to_walls(void, simplify_tol)
+                break
+        if void_walls is not None:
+            break
 
-    raise ValueError(
-        f"Point ({seed_x}, {seed_y}) is not enclosed by a void in the union of "
-        "the surrounders; they must fully ring the point."
-    )
+    if debug_svg_path is not None:
+        shapes = list(surrounders)
+        if void_walls is not None:
+            shapes = shapes + [void_walls]
+        debug_svg(shapes, debug_svg_path, points=[(seed_x, seed_y, "seed")])
+
+    if void_walls is None:
+        msg = (
+            f"Point ({seed_x}, {seed_y}) is not enclosed by a void in the union of "
+            "the surrounders; they must fully ring the point."
+        )
+        if debug_svg_path is not None:
+            msg += f" Wrote debug SVG to {debug_svg_path}."
+        raise ValueError(msg)
+
+    return void_walls
 
 
 def test_wall_ordering():
@@ -1715,6 +1736,18 @@ def test_enclosed_walls():
     mixed_walls = enclosed_walls(mixed, 15, 15)
     assert len(mixed_walls) == 4
     assert abs(signed_area_from_walls(mixed_walls) - 100) < 1e-6
+
+    # debug_svg_path (a path or file-like) dumps a diagram on failure before
+    # raising, so an un-enclosed seed is easy to eyeball.
+    import io
+    buf = io.StringIO()
+    try:
+        enclosed_walls(surrounders, 5, 5, debug_svg_path=buf)
+        assert False, "Expected ValueError for un-enclosed seed"
+    except ValueError:
+        pass
+    svg = buf.getvalue()
+    assert svg.startswith("<svg") and "seed" in svg and "</svg>" in svg
 
 
 def gen_windows(window_data: WindowData, win_height_ft = 6.0, z_ft = 4.0):

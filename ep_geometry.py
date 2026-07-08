@@ -1234,11 +1234,25 @@ class Rect:
         #  self.right = x1 + w
 
     @classmethod
-    def from_corners(cls, x1: float, y1: float, x2: float, y2: float) -> 'Rect':
+    def from_corners(cls, *corners) -> 'Rect':
         '''
-        Build a Rect from two opposite corners (x1, y1) and (x2, y2), in units of
-        ft. The corners may be given in any order.
+        Build a Rect from two opposite corners, in units of ft. The corners may
+        be given in any order.
+
+        Accepts either four scalars ``from_corners(x1, y1, x2, y2)`` or two
+        point-like corners ``from_corners(c1, c2)``, where each corner is a P, an
+        (x, y) tuple/list, or any object with .x and .y attributes. The two-corner
+        form is convenient for splatting e.g. another rect's ``top_right()``.
         '''
+        if len(corners) == 4:
+            x1, y1, x2, y2 = corners
+        elif len(corners) == 2:
+            (x1, y1), (x2, y2) = _as_xy(corners[0]), _as_xy(corners[1])
+        else:
+            raise TypeError(
+                "from_corners expects either 4 scalars (x1, y1, x2, y2) or 2 "
+                f"point-like corners (c1, c2); got {len(corners)} argument(s)."
+            )
         return cls(x1, y1, x2 - x1, y2 - y1)
 
     def points(self):
@@ -1326,6 +1340,18 @@ class P:
 
     def clone(self) -> 'P':
         return P(self.x, self.y)
+
+def _as_xy(corner) -> tuple[float, float]:
+    """Coerce a point-like corner into an (x, y) tuple.
+
+    Accepts a P, an object with .x and .y attributes, or a two-element
+    tuple/list.
+    """
+    if hasattr(corner, "x") and hasattr(corner, "y"):
+        return (corner.x, corner.y)
+    x, y = corner  # tuple/list of (x, y); raises if not length-2 iterable
+    return (x, y)
+
 
 def p2w(points: list[P]) -> list[Wall]:
     walls = []

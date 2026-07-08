@@ -1797,7 +1797,7 @@ def _as_poly(obj):
 
 
 def bounds(obj) -> Bounds:
-    """Axis-aligned bounding box (feet) of a Z or Rect.
+    """Axis-aligned bounding box (feet) of a Z, Rect, or list of Wall.
 
     Returns a named tuple with .left, .right, .bottom, .top, .width, .height and
     .area. `area` is the true polygon area (not the bounding-box area), so it is
@@ -1810,8 +1810,12 @@ def bounds(obj) -> Bounds:
     elif isinstance(obj, Rect):
         minx, miny, maxx, maxy = obj.x1, obj.y1, obj.x1 + obj.w, obj.y1 + obj.h
         area = obj.w * obj.h
+    elif isinstance(obj, list) and obj and all(isinstance(w, Wall) for w in obj):
+        poly = _as_poly(obj)
+        minx, miny, maxx, maxy = poly.bounds
+        area = poly.area
     else:
-        raise TypeError(f"Expected Z or Rect, got {type(obj).__name__}")
+        raise TypeError(f"Expected Z, Rect, or list of Wall, got {type(obj).__name__}")
     return Bounds(minx, maxx, miny, maxy, maxx - minx, maxy - miny, area)
 
 
@@ -1952,7 +1956,7 @@ def _svg_escape(text: str) -> str:
 
 def debug_svg(zones, file, show_bounds: bool = True, show_vertices: bool = True,
               show_grid: bool = True, padding_ft: float = 5.0, scale: float = 8.0,
-              grid_ft: float = 10.0) -> None:
+              grid_ft: float = 10.0, points=None) -> None:
     """Write a debugging SVG of the zone footprints.
 
     Each zone gets a bold colored fill/stroke, a centered label (name + area),
@@ -1961,16 +1965,20 @@ def debug_svg(zones, file, show_bounds: bool = True, show_vertices: bool = True,
     so the drawing reads with north up.
 
     `file` may be a path string or an already-open text file object.
-    `zones` may contain `Z` and/or `Rect` objects.
+    `zones` may contain `Z`, `Rect`, and/or `list[Wall]` objects.
+    `points` is an optional iterable of marker points to overlay, each either
+    (x, y) or (x, y, label); the marker is drawn as a labeled crosshair and is
+    included in the view bounds so a point outside every polygon still shows.
     """
     polys = [(_obj_name(z, f"[{i}]"), _poly_points(z), bounds(z)) for i, z in enumerate(zones)]
-    if not polys:
-        raise ValueError("debug_svg requires at least one zone")
+    markers = [tuple(p) for p in (points or [])]
+    if not polys and not markers:
+        raise ValueError("debug_svg requires at least one zone or point")
 
-    minx = min(b.left for _, _, b in polys)
-    maxx = max(b.right for _, _, b in polys)
-    miny = min(b.bottom for _, _, b in polys)
-    maxy = max(b.top for _, _, b in polys)
+    xs = [b.left for _, _, b in polys] + [b.right for _, _, b in polys] + [p[0] for p in markers]
+    ys = [b.bottom for _, _, b in polys] + [b.top for _, _, b in polys] + [p[1] for p in markers]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
 
     total_w = (maxx - minx + 2 * padding_ft) * scale
     total_h = (maxy - miny + 2 * padding_ft) * scale
@@ -2041,6 +2049,29 @@ def debug_svg(zones, file, show_bounds: bool = True, show_vertices: bool = True,
             f'<text x="{sx(cx):.1f}" y="{sy(cy) + 14:.1f}" font-family="sans-serif" '
             f'font-size="10" text-anchor="middle" fill="#333">'
             f'{b.area:.0f} ft&#178;</text>'
+        )
+
+    for i, marker in enumerate(markers):
+        mx, my = marker[0], marker[1]
+        label = marker[2] if len(marker) > 2 else f"pt{i}"
+        px, py = sx(mx), sy(my)
+        r = 6.0
+        out.append(
+            f'<line x1="{px - r:.1f}" y1="{py:.1f}" x2="{px + r:.1f}" y2="{py:.1f}" '
+            f'stroke="#111" stroke-width="1.5"/>'
+        )
+        out.append(
+            f'<line x1="{px:.1f}" y1="{py - r:.1f}" x2="{px:.1f}" y2="{py + r:.1f}" '
+            f'stroke="#111" stroke-width="1.5"/>'
+        )
+        out.append(
+            f'<circle cx="{px:.1f}" cy="{py:.1f}" r="{r:.1f}" fill="none" '
+            f'stroke="#111" stroke-width="1.5"/>'
+        )
+        out.append(
+            f'<text x="{px + r + 2:.1f}" y="{py - r:.1f}" font-family="sans-serif" '
+            f'font-size="11" font-weight="bold" fill="#111">'
+            f'{_svg_escape(label)} ({mx:g}, {my:g})</text>'
         )
 
     out.append("</svg>")
